@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufReader, Lines};
 use std::path::Path;
 use regex::Regex;
 use std::collections::HashMap;
@@ -14,6 +14,11 @@ use crate::LogFormat::HPC;
 use crate::LogFormat::Proxifier;
 use crate::LogFormat::Android;
 use crate::LogFormat::HealthApp;
+
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
 
 pub fn format_string(lf: &LogFormat) -> String {
     match lf {
@@ -148,7 +153,10 @@ fn test_token_splitter() {
 }
 
 // processes line, adding to the end of line the first two tokens from lookahead_line, and returns the first 2 tokens on this line
-fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>, regexp:&Regex, regexps:&Vec<Regex>, dbl: &mut HashMap<String, i32>, trpl: &mut HashMap<String, i32>, all_token_list: &mut Vec<String>, prev1: Option<String>, prev2: Option<String>) -> (Option<String>, Option<String>) {
+fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>, regexp:&Regex,
+                                   regexps:&Vec<Regex>, dbl: &mut HashMap<String, i32>,
+                                   trpl: &mut HashMap<String, i32>, all_token_list: &mut Vec<String>,
+                                   prev1: Option<String>, prev2: Option<String>) -> (Option<String>, Option<String>) {
     let (next1, next2) = match lookahead_line {
         None => (None, None),
         Some(ll) => {
@@ -204,10 +212,10 @@ fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>,
         let triple_tmp = format!("{}^{}^{}", triples[0], triples[1], triples[2]);
 	*trpl.entry(triple_tmp.to_owned()).or_default() += 1;
     }
-    return (last1, last2);
+    return (last1, last2); // returns the positions of the last two tokens of the "prev" line for the next iteration
 }
 
-fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
+fn dictionary_builder_old(raw_fn: String, format: String, regexps: Vec<Regex>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
     let mut dbl = HashMap::new();
     let mut trpl = HashMap::new();
     let mut all_token_list = vec![];
@@ -233,6 +241,80 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
         }
     }
     return (dbl, trpl, all_token_list)
+}
+
+fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
+    let mut dbl = HashMap::new();
+    let mut trpl = HashMap::new();
+    let mut all_token_list = vec![];
+    let regex = regex_generator(format);
+    let mut vec_lines = vec![];
+
+    // let mut prev1 = None; let mut prev2 = None;
+
+    if let Ok(lines) = read_lines(raw_fn) {
+        let mut lp = lines.peekable();
+        loop {
+            match lp.next() {
+                None => break,
+                Some(Ok(ip)) =>
+                    {
+                        vec_lines.push(ip);
+                    }
+                Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
+            }
+        }
+    }
+
+    let (tx, rx) = mpsc::channel();
+
+    for three_lines in vec_lines.windows(3) {
+        let vec_three_lines = three_lines.clone().to_vec();
+        thread::spawn(move || {
+            let _ = tx.send(worker(vec_three_lines, format.clone(), regexps.clone()));
+        });
+    }
+
+    for received in rx {
+        let arcs = received;
+        let (dbl_rx, trpl_rx, all_token_list_rx) = arcs;
+        let arc_dbl = dbl_rx;
+        let arc_trpl = trpl_rx;
+        let arc_all_token_list = all_token_list_rx;
+        let dbl_guard = arc_dbl.lock().unwrap().to_owned();
+        let trpl_guard = arc_trpl.lock().unwrap().to_owned();
+        let arc_all_token_guard = arc_all_token_list.lock().unwrap().to_vec();
+
+        dbl.extend(dbl_guard);
+        trpl.extend(trpl_guard);
+        all_token_list.extend(arc_all_token_guard);
+
+    }
+    return (dbl, trpl, all_token_list)
+}
+
+fn worker(blocks: Vec<String>, format: String, regexps: Vec<Regex>) -> (Arc<Mutex<HashMap<String, i32>>>, Arc<Mutex<HashMap<String, i32>>>, Arc<Mutex<Vec<String>>>) {
+    let mut dbl = HashMap::new();
+    let mut trpl = HashMap::new();
+    let mut all_token_list = vec![];
+    let regex = regex_generator(format);
+
+    let mut prev1 = None; let mut prev2 = None;
+
+    let mut lp = blocks.iter().peekable();
+    match lp.next() {
+        None => {},
+        Some(Ok(ip)) =>
+            match lp.peek() {
+                None =>
+                    (prev1, prev2) = process_dictionary_builder_line(ip, None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
+                Some(Ok(next_line)) =>
+                    (prev1, prev2) = process_dictionary_builder_line(ip, Some(next_line.clone()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
+                Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
+            }
+        Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
+    }
+    return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
 }
 
 #[test]
@@ -287,7 +369,7 @@ fn test_dictionary_builder_process_line_lookahead_is_some() {
 }
 
 pub fn parse_raw(raw_fn: String, lf:&LogFormat) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
-    let (double_dict, triple_dict, all_token_list) = dictionary_builder(raw_fn, format_string(&lf), censored_regexps(&lf));
+    let (double_dict, triple_dict, all_token_list) = dictionary_builder_old(raw_fn, format_string(&lf), censored_regexps(&lf));
     println!("double dictionary list len {}, triple {}, all tokens {}", double_dict.len(), triple_dict.len(), all_token_list.len());
     return (double_dict, triple_dict, all_token_list);
 }
