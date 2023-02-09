@@ -20,6 +20,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use rayon::prelude::*;
+// use rayon::ThreadPool;
+use threadpool::ThreadPool;
+use threadpool_scope::scope_with;
 
 pub fn format_string(lf: &LogFormat) -> String {
     match lf {
@@ -248,7 +251,7 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
     let mut dbl = HashMap::new();
     let mut trpl = HashMap::new();
     let mut all_token_list = vec![];
-    let regex = regex_generator(format.clone());
+    // let regex = regex_generator(format.clone());
     let mut vec_lines = vec![];
 
     // let mut prev1 = None; let mut prev2 = None;
@@ -267,30 +270,30 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
         }
     }
 
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+    // let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+    let pool = ThreadPool::new(8);
     let (tx, rx) = mpsc::channel();
 
-    pool.scope(move |s| {
+    scope_with(&pool, |scope| {
         vec_lines.windows(3).for_each(|three_lines| {
             let tx = tx.clone();
             let format_clone = format.clone();
             let regexps_clone = regexps.clone();
-            s.spawn(move |s| {
+            scope.execute(move || {
                 tx.send(worker(three_lines.to_vec(), format_clone, regexps_clone)).unwrap();
             });
         });
+        pool.join();
     });
-    //
-    // thread::scope(|s|{
-    //     for three_lines in vec_lines.windows(3) { // rayon, could use rayon top spawn threads
-    //         let vec_three_lines = three_lines.clone().to_vec();
-    //         let tx_clone = tx.clone();
-    //         let format_clone = format.clone();
-    //         let regexps_clone = regexps.clone();
-    //             s.spawn(move || {     // then use threadpool
-    //                 let _ = tx_clone.send(worker(vec_three_lines, &format, &regexps));
-    //             });
-    //     }
+
+    // let ref_vec = &vec_lines;
+    // ref_vec.windows(3).for_each(|three_lines| {
+    //     let tx = tx.clone();
+    //     let format_clone = format.clone();
+    //     let regexps_clone = regexps.clone();
+    //     pool.install(move || {
+    //         tx.send(worker(three_lines.to_vec(), format_clone, regexps_clone)).unwrap();
+    //     });
     // });
 
     for received in rx {
@@ -306,8 +309,9 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
         dbl.extend(dbl_guard);
         trpl.extend(trpl_guard);
         all_token_list.extend(arc_all_token_guard);
-
+        println!("{:?}", dbl);
     }
+    println!("Hi -------, {:?}", dbl);
     return (dbl, trpl, all_token_list)
 }
 
@@ -328,6 +332,7 @@ fn worker(blocks: Vec<String>, format: String, regexps: Vec<Regex>) -> (Arc<Mute
             (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
         _ => {} // meh, some weirdly-encoded line, throw it out
     }
+    // println!("{:?}", dbl);
     return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
 }
 
@@ -383,7 +388,7 @@ fn test_dictionary_builder_process_line_lookahead_is_some() {
 }
 
 pub fn parse_raw(raw_fn: String, lf:&LogFormat) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
-    let (double_dict, triple_dict, all_token_list) = dictionary_builder_old(raw_fn, format_string(&lf), censored_regexps(&lf));
+    let (double_dict, triple_dict, all_token_list) = dictionary_builder(raw_fn, format_string(&lf), censored_regexps(&lf));
     println!("double dictionary list len {}, triple {}, all tokens {}", double_dict.len(), triple_dict.len(), all_token_list.len());
     return (double_dict, triple_dict, all_token_list);
 }
