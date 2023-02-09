@@ -327,10 +327,22 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>, num_t
         let trpl_guard = arc_trpl.lock().unwrap().to_owned();
         let arc_all_token_guard = arc_all_token_list.lock().unwrap().to_vec();
 
-        dbl.extend(dbl_guard);
-        trpl.extend(trpl_guard);
-        all_token_list.extend(arc_all_token_guard);
+        for (key, value) in dbl_guard {
+            *dbl.entry(key).or_default() += value;
+        }
+        for (key, value) in trpl_guard {
+            *trpl.entry(key).or_default() += value;
+        }
+        for token in arc_all_token_guard {
+            all_token_list.push(token);
+        }
+        // dbl.extend(dbl_guard);
+        // trpl.extend(trpl_guard);
+        // all_token_list.extend(arc_all_token_guard);
+
     }
+    all_token_list.sort_unstable();
+    all_token_list.dedup();
     return (dbl, trpl, all_token_list)
 }
 
