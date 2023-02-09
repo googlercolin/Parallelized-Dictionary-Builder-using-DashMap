@@ -19,6 +19,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
+use rayon::prelude::*;
 
 pub fn format_string(lf: &LogFormat) -> String {
     match lf {
@@ -247,7 +248,7 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
     let mut dbl = HashMap::new();
     let mut trpl = HashMap::new();
     let mut all_token_list = vec![];
-    let regex = regex_generator(format);
+    let regex = regex_generator(format.clone());
     let mut vec_lines = vec![];
 
     // let mut prev1 = None; let mut prev2 = None;
@@ -266,14 +267,31 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>) -> (H
         }
     }
 
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
     let (tx, rx) = mpsc::channel();
 
-    for three_lines in vec_lines.windows(3) {
-        let vec_three_lines = three_lines.clone().to_vec();
-        thread::spawn(move || {
-            let _ = tx.send(worker(vec_three_lines, format.clone(), regexps.clone()));
+    pool.scope(move |s| {
+        vec_lines.windows(3).for_each(|three_lines| {
+            let tx = tx.clone();
+            let format_clone = format.clone();
+            let regexps_clone = regexps.clone();
+            s.spawn(move |s| {
+                tx.send(worker(three_lines.to_vec(), format_clone, regexps_clone)).unwrap();
+            });
         });
-    }
+    });
+    //
+    // thread::scope(|s|{
+    //     for three_lines in vec_lines.windows(3) { // rayon, could use rayon top spawn threads
+    //         let vec_three_lines = three_lines.clone().to_vec();
+    //         let tx_clone = tx.clone();
+    //         let format_clone = format.clone();
+    //         let regexps_clone = regexps.clone();
+    //             s.spawn(move || {     // then use threadpool
+    //                 let _ = tx_clone.send(worker(vec_three_lines, &format, &regexps));
+    //             });
+    //     }
+    // });
 
     for received in rx {
         let arcs = received;
@@ -302,17 +320,13 @@ fn worker(blocks: Vec<String>, format: String, regexps: Vec<Regex>) -> (Arc<Mute
     let mut prev1 = None; let mut prev2 = None;
 
     let mut lp = blocks.iter().peekable();
-    match lp.next() {
-        None => {},
-        Some(Ok(ip)) =>
-            match lp.peek() {
-                None =>
-                    (prev1, prev2) = process_dictionary_builder_line(ip, None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-                Some(Ok(next_line)) =>
-                    (prev1, prev2) = process_dictionary_builder_line(ip, Some(next_line.clone()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-                Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
-            }
-        Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
+    let ip = lp.next().unwrap();
+    match lp.peek() {
+        None =>
+            (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
+        Some(next_line) =>
+            (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
+        _ => {} // meh, some weirdly-encoded line, throw it out
     }
     return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
 }
