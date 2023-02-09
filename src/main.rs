@@ -132,8 +132,28 @@ fn main() {
     };
     let cutoff = args.cutoff.unwrap();
 
-    let (double_dict, triple_dict, _all_token_list) =
-        packages::parser::parse_raw(input_fn.unwrap(), &log_format);
+    let mut double_dict: HashMap<String, i32> = Default::default();
+    let mut triple_dict: HashMap<String, i32> = Default::default();
+    let mut _all_token_list: Vec<String> = vec![];
+    match args.single_map {
+        Some(x) => {
+            if x {
+                (double_dict, triple_dict, _all_token_list) =
+                    packages::parser::parse_raw_single(input_fn.unwrap(), &log_format, args.num_threads);
+                // println!("Yes");
+            }
+            else {
+                // println!("Error");
+            }
+
+        },
+        None => {
+            (double_dict, triple_dict, _all_token_list) =
+                packages::parser::parse_raw(input_fn.unwrap(), &log_format, args.num_threads);
+            // println!("Not");
+        }
+    };
+
 
     view_double_and_triple_dicts(&double_dict, &triple_dict);
 
