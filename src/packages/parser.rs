@@ -19,10 +19,11 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use rayon::prelude::*;
-// use rayon::ThreadPool;
 use threadpool::ThreadPool;
 use threadpool_scope::scope_with;
+use dashmap::{DashMap, DashSet};
+use crate::packages::parser::Map::{TypeHash, TypeDash};
+use crate::packages::parser::Set::{TypeVec, TypeDSet};
 
 pub fn format_string(lf: &LogFormat) -> String {
     match lf {
@@ -156,10 +157,20 @@ fn test_token_splitter() {
     assert_eq!(split_line, vec!["check", "pass;", "user", "unknown"]);
 }
 
+enum Map<'a> {
+    TypeHash(&'a mut HashMap<String, i32>),
+    TypeDash(&'a DashMap<String, i32>),
+}
+
+enum Set<'a> {
+    TypeVec(&'a mut Vec<String>),
+    TypeDSet(&'a DashSet<String>),
+}
+
 // processes line, adding to the end of line the first two tokens from lookahead_line, and returns the first 2 tokens on this line
 fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>, regexp:&Regex,
-                                   regexps:&Vec<Regex>, dbl: &mut HashMap<String, i32>,
-                                   trpl: &mut HashMap<String, i32>, all_token_list: &mut Vec<String>,
+                                   regexps:&Vec<Regex>, dbl: Map,
+                                   trpl: Map, all_token_list: Set,
                                    prev1: Option<String>, prev2: Option<String>) -> (Option<String>, Option<String>) {
     let (next1, next2) = match lookahead_line {
         None => (None, None),
@@ -177,7 +188,14 @@ fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>,
     if tokens.is_empty() {
         return (None, None);
     }
-    tokens.iter().for_each(|t| if !all_token_list.contains(t) { all_token_list.push(t.clone()) } );
+    match all_token_list {
+        TypeVec(all_token_list) => {
+            tokens.iter().for_each(|t| if !all_token_list.contains(t) { all_token_list.push(t.clone()) } );
+        },
+        TypeDSet(all_token_list) => {
+            tokens.iter().for_each(|t| if !all_token_list.contains(t) { all_token_list.insert(t.clone()); } );
+        }
+    }
 
     // keep this for later when we'll return it
     let last1 = match tokens.len() {
@@ -199,9 +217,19 @@ fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>,
         Some(x) => { tokens2_.push(x); tokens2_ }
     };
 
-    for doubles in tokens2.windows(2) {
-        let double_tmp = format!("{}^{}", doubles[0], doubles[1]);
-	*dbl.entry(double_tmp.to_owned()).or_default() += 1;
+    match dbl {
+        TypeHash(dbl) => {
+            for doubles in tokens2.windows(2) {
+                let double_tmp = format!("{}^{}", doubles[0], doubles[1]);
+                *dbl.entry(double_tmp.to_owned()).or_default() += 1;
+            }
+        },
+        TypeDash(dbl) => {
+            for doubles in tokens2.windows(2) {
+                let double_tmp = format!("{}^{}", doubles[0], doubles[1]);
+                *dbl.entry(double_tmp.to_owned()).or_default() += 1;
+            }
+        }
     }
 
     let mut tokens3_ = match prev2 {
@@ -212,40 +240,22 @@ fn process_dictionary_builder_line(line: String, lookahead_line: Option<String>,
         None => tokens3_,
         Some(x) => { tokens3_.push(x); tokens3_ }
     };
-    for triples in tokens3.windows(3) {
-        let triple_tmp = format!("{}^{}^{}", triples[0], triples[1], triples[2]);
-	*trpl.entry(triple_tmp.to_owned()).or_default() += 1;
+    match trpl {
+        TypeHash(trpl) => {
+            for triples in tokens3.windows(3) {
+                let triple_tmp = format!("{}^{}^{}", triples[0], triples[1], triples[2]);
+                *trpl.entry(triple_tmp.to_owned()).or_default() += 1;
+            }
+        },
+        TypeDash(trpl) => {
+            for triples in tokens3.windows(3) {
+                let triple_tmp = format!("{}^{}^{}", triples[0], triples[1], triples[2]);
+                *trpl.entry(triple_tmp.to_owned()).or_default() += 1;
+            }
+        }
     }
     return (last1, last2); // returns the positions of the last two tokens of the "prev" line for the next iteration
 }
-
-// fn dictionary_builder_old(raw_fn: String, format: String, regexps: Vec<Regex>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
-//     let mut dbl = HashMap::new();
-//     let mut trpl = HashMap::new();
-//     let mut all_token_list = vec![];
-//     let regex = regex_generator(format);
-//
-//     let mut prev1 = None; let mut prev2 = None;
-//
-//     if let Ok(lines) = read_lines(raw_fn) {
-//         let mut lp = lines.peekable();
-//         loop {
-//             match lp.next() {
-//                 None => break,
-//                 Some(Ok(ip)) =>
-//                     match lp.peek() {
-//                         None =>
-//                             (prev1, prev2) = process_dictionary_builder_line(ip, None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-//                         Some(Ok(next_line)) =>
-//                             (prev1, prev2) = process_dictionary_builder_line(ip, Some(next_line.clone()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-//                         Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
-//                     }
-//                 Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
-//             }
-//         }
-//     }
-//     return (dbl, trpl, all_token_list)
-// }
 
 fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>, num_threads: Option<u32>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
     let mut dbl = HashMap::new();
@@ -261,16 +271,12 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>, num_t
         loop {
             match lp.next() {
                 None => break,
-                Some(Ok(ip)) =>
-                    {
-                        vec_lines.push(ip);
-                    }
+                Some(Ok(ip)) => vec_lines.push(ip),
                 Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
             }
         }
     }
 
-    // let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
     let mut num_workers:u32 = 8;
     match num_threads {
         Some(x) => num_workers = x,
@@ -293,28 +299,6 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>, num_t
         pool.join();
     });
 
-    // scope_with(&pool, |scope| {
-    //     vec_lines.windows(3).for_each(|three_lines| {
-    //         let tx = tx.clone();
-    //         let format_clone = format.clone();
-    //         let regexps_clone = regexps.clone();
-    //         scope.execute(move || {
-    //             tx.send(worker(three_lines.to_vec(), format_clone, regexps_clone)).unwrap();
-    //         });
-    //     });
-    //     pool.join();
-    // });
-
-    // let ref_vec = &vec_lines;
-    // ref_vec.windows(3).for_each(|three_lines| {
-    //     let tx = tx.clone();
-    //     let format_clone = format.clone();
-    //     let regexps_clone = regexps.clone();
-    //     pool.install(move || {
-    //         tx.send(worker(three_lines.to_vec(), format_clone, regexps_clone)).unwrap();
-    //     });
-    // });
-
     drop(tx);
 
     for received in rx {
@@ -336,9 +320,6 @@ fn dictionary_builder(raw_fn: String, format: String, regexps: Vec<Regex>, num_t
         for token in arc_all_token_guard {
             all_token_list.push(token);
         }
-        // dbl.extend(dbl_guard);
-        // trpl.extend(trpl_guard);
-        // all_token_list.extend(arc_all_token_guard);
 
     }
     all_token_list.sort_unstable();
@@ -355,46 +336,127 @@ fn worker(blocks: Vec<String>, format: String, regexps: Vec<Regex>) -> (Arc<Mute
     let mut prev1 = None; let mut prev2 = None;
 
     let mut lp = blocks.iter().peekable();
-    // let ip = lp.next().unwrap();
+    loop {
+        match lp.next() {
+            None => break,
+            Some(ip) => {
+                match lp.peek() {
+                    None =>
+                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), None, &regex, &regexps, Map::TypeHash(&mut dbl), Map::TypeHash(&mut trpl), Set::TypeVec(&mut all_token_list), prev1, prev2),
+                    Some(next_line) =>
+                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, Map::TypeHash(&mut dbl), Map::TypeHash(&mut trpl), Set::TypeVec(&mut all_token_list), prev1, prev2),
+                }
+            },
+        }
+    }
+    return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
+}
+
+fn dictionary_builder_conc(raw_fn: String, format: String, regexps: Vec<Regex>, num_threads: Option<u32>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
+    let mut dbl = DashMap::new();
+    let mut trpl = DashMap::new();
+    let mut all_token_list = DashSet::new();
+    let mut vec_lines = vec![];
+    let mut dbl_hash = HashMap::new();
+    let mut trpl_hash = HashMap::new();
+    let mut vec_all_token_list = vec![];
+
+    if let Ok(lines) = read_lines(raw_fn) {
+        let mut lp = lines.peekable();
+        loop {
+            match lp.next() {
+                None => break,
+                Some(Ok(ip)) =>
+                    {
+                        vec_lines.push(ip);
+                    }
+                Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
+            }
+        }
+    }
+
+    let mut num_workers:u32 = 8;
+    match num_threads {
+        Some(x) => num_workers = x,
+        _ => {}
+    };
+    let mut pool = ThreadPool::new(num_workers.try_into().unwrap());
+    let (tx, rx) = mpsc::channel();
+
+    let chunks = vec_lines.chunks((vec_lines.len() / usize::try_from(num_workers).unwrap()).max(1));
+
+    scope_with(&pool, |scope| {
+        for chunk in chunks {
+            let tx = tx.clone();
+            let format_clone = format.clone();
+            let regexps_clone = regexps.clone();
+            let dbl_clone = dbl.clone();
+            let trpl_clone = trpl.clone();
+            let dset = all_token_list.clone();
+            scope.execute(move || {
+                tx.send(worker_conc(chunk.to_vec(), format_clone, regexps_clone, dbl_clone, trpl_clone, dset)).unwrap();
+            });
+        };
+        pool.join();
+    });
+
+    drop(tx);
+
+    for received in rx {
+        let arcs = received;
+        let (dbl_rx, trpl_rx, all_token_list_rx) = arcs;
+        let arc_dbl = dbl_rx;
+        let arc_trpl = trpl_rx;
+        let arc_all_token_list = all_token_list_rx;
+        let dbl_guard = arc_dbl.lock().unwrap().to_owned();
+        let trpl_guard = arc_trpl.lock().unwrap().to_owned();
+        let arc_all_token_guard = arc_all_token_list.lock().unwrap().to_owned();
+
+        for (key, value) in dbl_guard {
+            *dbl.entry(key).or_default() += value;
+        }
+        for (key, value) in trpl_guard {
+            *trpl.entry(key).or_default() += value;
+        }
+        for token in arc_all_token_guard {
+            all_token_list.insert(token);
+        }
+    }
+
+    for (key, value) in dbl {
+        *dbl_hash.entry(key).or_default() += value;
+    }
+    for (key, value) in trpl {
+        *trpl_hash.entry(key).or_default() += value;
+    }
+    for token in all_token_list {
+        vec_all_token_list.push(token);
+    }
+    vec_all_token_list.sort_unstable();
+    vec_all_token_list.dedup();
+    return (dbl_hash, trpl_hash, vec_all_token_list)
+}
+
+fn worker_conc(blocks: Vec<String>, format: String, regexps: Vec<Regex>, dbl: DashMap<String, i32>, trpl: DashMap<String, i32>, all_token_list: DashSet<String>) -> (Arc<Mutex<DashMap<String, i32>>>, Arc<Mutex<DashMap<String, i32>>>, Arc<Mutex<DashSet<String>>>) {
+    let regex = regex_generator(format);
+
+    let mut prev1 = None; let mut prev2 = None;
+
+    let mut lp = blocks.iter().peekable();
     loop {
         match lp.next() {
             None => break,
             Some(ip) =>
                 match lp.peek() {
                     None =>
-                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
+                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), None, &regex, &regexps, Map::TypeDash(&dbl), Map::TypeDash(&trpl), Set::TypeDSet(&all_token_list), prev1, prev2),
                     Some(next_line) =>
-                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-                    // _ => {} // meh, some weirdly-encoded line, throw it out
+                        (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, Map::TypeDash(&dbl), Map::TypeDash(&trpl), Set::TypeDSet(&all_token_list), prev1, prev2),
                 }
-            // Some(Err(_)) => {} // meh, some weirdly-encoded line, throw it out
         }
     }
-    // println!("{:?}", dbl);
     return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
 }
-
-// fn worker_old(blocks: Vec<String>, format: String, regexps: Vec<Regex>) -> (Arc<Mutex<HashMap<String, i32>>>, Arc<Mutex<HashMap<String, i32>>>, Arc<Mutex<Vec<String>>>) {
-//     let mut dbl = HashMap::new();
-//     let mut trpl = HashMap::new();
-//     let mut all_token_list = vec![];
-//     let regex = regex_generator(format);
-//
-//     let mut prev1 = None; let mut prev2 = None;
-//
-//     let mut lp = blocks.iter().peekable();
-//     let ip = lp.next().unwrap();
-//
-//     match lp.peek() {
-//         None =>
-//             (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), None, &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-//         Some(next_line) =>
-//             (prev1, prev2) = process_dictionary_builder_line(ip.to_string(), Some(next_line.to_string()), &regex, &regexps, &mut dbl, &mut trpl, &mut all_token_list, prev1, prev2),
-//         _ => {} // meh, some weirdly-encoded line, throw it out
-//     }
-//     // println!("{:?}", dbl);
-//     return (Arc::new(Mutex::new(dbl)), Arc::new(Mutex::new(trpl)), Arc::new(Mutex::new(all_token_list)))
-// }
 
 #[test]
 fn test_dictionary_builder_process_line_lookahead_is_none() {
@@ -453,8 +515,8 @@ pub fn parse_raw_single(raw_fn: String, lf:&LogFormat, num_threads: Option<u32>)
     return (double_dict, triple_dict, all_token_list);
 }
 
-pub fn parse_raw(raw_fn: String, lf:&LogFormat, num_threads: Option<u32>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
-    let (double_dict, triple_dict, all_token_list) = dictionary_builder(raw_fn, format_string(&lf), censored_regexps(&lf), num_threads);
+pub fn parse_raw_conc(raw_fn: String, lf:&LogFormat, num_threads: Option<u32>) -> (HashMap<String, i32>, HashMap<String, i32>, Vec<String>) {
+    let (double_dict, triple_dict, all_token_list) = dictionary_builder_conc(raw_fn, format_string(&lf), censored_regexps(&lf), num_threads);
     println!("double dictionary list len {}, triple {}, all tokens {}", double_dict.len(), triple_dict.len(), all_token_list.len());
     return (double_dict, triple_dict, all_token_list);
 }

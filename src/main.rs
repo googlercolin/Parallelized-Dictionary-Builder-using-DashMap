@@ -140,7 +140,6 @@ fn main() {
             if x {
                 (double_dict, triple_dict, _all_token_list) =
                     packages::parser::parse_raw_single(input_fn.unwrap(), &log_format, args.num_threads);
-                // println!("Yes");
             }
             else {
                 // println!("Error");
@@ -149,8 +148,7 @@ fn main() {
         },
         None => {
             (double_dict, triple_dict, _all_token_list) =
-                packages::parser::parse_raw(input_fn.unwrap(), &log_format, args.num_threads);
-            // println!("Not");
+                packages::parser::parse_raw_conc(input_fn.unwrap(), &log_format, args.num_threads);
         }
     };
 
