@@ -9,7 +9,7 @@ Then using a `mpsc` channel, we send a `worker_conc` function which processes ea
 
 The `worker_conc` function is almost identical to the old dictionary_builder function. The main difference is the return types. To perform the joining from the separate threads safely, we return `Arc::new(Mutex::new(dbl))`, `Arc::new(Mutex::new(trpl))`, and `Arc::new(Mutex::new(all_token_list))` instead.
 
-To use the concurrent maps version, you do not have to add any flags, it is run by default.
+To use the concurrent maps version, you do not have to add any flags, it is run by default. In the future, we could try out a lock-free, eventually consistent, concurrent multi-value map, [evmap](https://github.com/jonhoo/evmap).
 
 # Testing for correctness
 We test our outputs using the [ECE459-A2-Comparison-Tool](https://github.com/chjon/ECE459-A2-Comparison-Tool) kindly provided by [Jonathan Chung](https://github.com/chjon). We first save the outputs from the original `dictionary_builder`, and the multithreaded solution using the concurrent HashMaps, `DashMap`s. We then run `python3 compare.py <FILE_1.txt> <FILE_2.txt> [TOLERANCE]`, with a tolerance of 2*`num_threads`. We observe no out of tolerance results, assuming the results from the original `dictionary_builder` was free from error.
