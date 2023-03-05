@@ -1,0 +1,68 @@
+Test #1 (separate_maps_single_thread_correctness): PASS
+=========
+Test #2 (separate_maps_single_thread_correctness): PASS
+=========
+Test #3 (separate_maps_single_thread_correctness): PASS
+=========
+Test #4 (separate_maps_single_thread_correctness): PASS
+=========
+Test #5 (separate_maps_single_thread_correctness): PASS
+=========
+Test #6 (separate_maps_single_thread_correctness): PASS
+=========
+Test #7 (separate_maps_single_thread_correctness): PASS
+=========
+Test #8 (separate_maps_single_thread_correctness): PASS
+=========
+Test #9 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #10 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #11 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #12 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #13 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #14 (separate_maps_multi_thread_correctness): PASS
+=========
+Test #15 (concurrent_single_thread_correctness): PASS
+=========
+Test #16 (concurrent_single_thread_correctness): PASS
+=========
+Test #17 (concurrent_single_thread_correctness): PASS
+=========
+Test #18 (concurrent_single_thread_correctness): PASS
+=========
+Test #19 (concurrent_single_thread_correctness): PASS
+=========
+Test #20 (concurrent_single_thread_correctness): PASS
+=========
+Test #21 (concurrent_single_thread_correctness): PASS
+=========
+Test #22 (concurrent_single_thread_correctness): PASS
+=========
+Test #23 (concurrent_multi_thread_correctness): PASS
+=========
+Test #24 (concurrent_multi_thread_correctness): PASS
+=========
+Test #25 (concurrent_multi_thread_correctness): PASS
+=========
+Test #26 (concurrent_multi_thread_correctness): PASS
+=========
+Test #27 (concurrent_multi_thread_correctness): PASS
+=========
+Test #28 (concurrent_multi_thread_correctness): PASS
+=========
+Test #29 (separate_maps_speedup): PASS
+=========
+Test #30 (separate_maps_speedup): PASS
+=========
+Test #31 (separate_maps_num_threads_effect): PASS
+=========
+Test #32 (concurrent_speedup): PASS
+=========
+Test #33 (concurrent_speedup): PASS
+=========
+Test #34 (concurrent_num_threads_effect): PASS
+=========
